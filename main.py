@@ -41,12 +41,10 @@ def calculate_rsi(prices, period=14):
     return 100 - (100 / (1 + rs))
 
 def check_market():
-    # أهم وأقوى العملات الرقمية ذات السيولة العالية
     symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"]
     
     for symbol in symbols:
         try:
-            # جلب البيانات على إطار 15 دقيقة
             url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=30"
             response = requests.get(url)
             klines = response.json()
@@ -55,11 +53,11 @@ def check_market():
             current_price = close_prices[-1]
             rsi = calculate_rsi(close_prices)
             
-            # استراتيجية صفقات الصعود (Long) بأهداف صغيرة ومضمونة
+            # صفقة صعود (LONG)
             if rsi < 30:
                 entry = current_price
-                target = round(entry * 1.012, 4) # هدف ربح آمن 1.2%
-                stop_loss = round(entry * 0.994, 4) # وقف خسارة ضيق 0.6%
+                target = round(entry * 1.012, 4)
+                stop_loss = round(entry * 0.994, 4)
                 
                 msg = (
                     f"🚨 **فرصة صفقة صعود (LONG)** 🚨\n\n"
@@ -68,16 +66,16 @@ def check_market():
                     f"🟢 **سعر الدخول:** `{entry}`\n"
                     f"🎯 **الهدف (Take Profit):** `{target}` (+1.2%)\n"
                     f"🛑 **وقف الخسارة (Stop Loss):** `{stop_loss}` (-0.6%)\n"
-                    f"⚡ **الرافعة المالية المقترحة:** `5x` (للحفاظ على الأمان والربح المضمون)\n"
-                    f"📊 **مؤشر RSI:** `{round(rsi, 2)}` (منطقة تشبع بيعي - فرصة ارتداد)"
+                    f"⚡ **الرافعة المالية:** `5x`\n"
+                    f"📊 **مؤشر RSI:** `{round(rsi, 2)}`"
                 )
                 send_telegram_message(msg)
                 
-            # استراتيجية صفقات الهبوط (Short) بأهداف صغيرة ومضمونة
+            # صفقة هبوط (SHORT)
             elif rsi > 70:
                 entry = current_price
-                target = round(entry * 0.988, 4) # هدف ربح آمن 1.2%
-                stop_loss = round(entry * 1.006, 4) # وقف خسارة ضيق 0.6%
+                target = round(entry * 0.988, 4)
+                stop_loss = round(entry * 1.006, 4)
                 
                 msg = (
                     f"🚨 **فرصة صفقة هبوط (SHORT)** 🚨\n\n"
@@ -86,8 +84,8 @@ def check_market():
                     f"🔴 **سعر الدخول:** `{entry}`\n"
                     f"🎯 **الهدف (Take Profit):** `{target}` (-1.2%)\n"
                     f"🛑 **وقف الخسارة (Stop Loss):** `{stop_loss}` (+0.6%)\n"
-                    f"⚡ **الرافعة المالية المقترحة:** `5x` (للحفاظ على الأمان والربح المضمون)\n"
-                    f"📊 **مؤشر RSI:** `{round(rsi, 2)}` (منطقة تشبع شرائي - فرصة تصحيح)"
+                    f"⚡ **الرافعة المالية:** `5x`\n"
+                    f"📊 **مؤشر RSI:** `{round(rsi, 2)}`"
                 )
                 send_telegram_message(msg)
                 
@@ -95,12 +93,11 @@ def check_market():
             print(f"Error checking {symbol}: {e}")
 
 def main():
-    print("Bot is running...")
-    send_telegram_message("🚀 تم تشغيل بوت التداول الذكي (إطار 15 دقيقة) بنجاح وجاهز لاصطياد الصفقات الآمنة!")
+    print("Bot is running silently and monitoring the market...")
     
     while True:
         check_market()
-        time.sleep(900) # الفحص كل 15 دقيقة لتطابق الشموع
+        time.sleep(900)
 
 if __name__ == "__main__":
     main()
