@@ -26,6 +26,7 @@ TP_ATR = float(os.getenv("TP_ATR", "3.0"))       # الهدف = 3 × ATR (نسب
 STATUS_REPORT = os.getenv("STATUS_REPORT", "0") == "1"   # تقرير فحص مع كل شمعة
 ACCOUNT_BALANCE = float(os.getenv("ACCOUNT_BALANCE", "100000"))  # رصيد الحساب بالدولار
 RISK_PCT = float(os.getenv("RISK_PCT", "1.0"))                  # نسبة المخاطرة لكل صفقة %
+MIN_SL_PIPS = float(os.getenv("MIN_SL_PIPS", "8"))             # تجاهل الإشارات التي وقفها أقل من هذا (بالنقاط)
 CONTRACT_SIZE = 100000                                          # حجم اللوت القياسي
 MAX_TRADE_SECONDS = 24 * 3600                    # الصفقة المتتبَّعة تنتهي بعد 24 ساعة سوق
 
@@ -49,7 +50,7 @@ log = logging.getLogger("bot")
 
 # تتبع الصفقات والنتائج (في الذاكرة، وتبدأ من جديد عند إعادة التشغيل)
 open_trades = {}
-stats = {"win": 0, "loss": 0, "other": 0, "r": 0.0, "usd": 0.0}
+stats = {"win": 0, "loss": 0, "other": 0, "r": 0.0, "usd": 0.0, "skipped": 0}
 last_price = {}
 
 
@@ -205,10 +206,19 @@ def position_size(sym, dist):
 # ============ تتبع النتائج ============
 def stats_line():
     return (f"📈 الحصيلة: رابحة {stats['win']} | خاسرة {stats['loss']} | "
-            f"أخرى {stats['other']} | الصافي {stats['r']:+.1f}R (≈ {stats['usd']:+.0f}$)")
+            f"أخرى {stats['other']} | الصافي {stats['r']:+.1f}R (≈ {stats['usd']:+.0f}$) | "
+            f"إشارات ضعيفة متجاهلة {stats['skipped']}")
 
 
-def finish_trade(sym, kind, r_value, title):
+def fmt_duration(seconds):
+    minutes = max(int(seconds // 60), 0)
+    if minutes < 60:
+        return f"{minutes} دقيقة"
+    h, m = divmod(minutes, 60)
+    return f"{h} ساعة" + (f" و{m} دقيقة" if m else "")
+
+
+def finish_trade(sym, kind, r_value, title, exit_price, end_ts):
     t = open_trades.pop(sym)
     usd = r_value * t.get("risk_usd", 0.0)
     stats[kind] += 1
@@ -217,6 +227,9 @@ def finish_trade(sym, kind, r_value, title):
     usd_txt = f" (≈ {usd:+.0f}$)" if t.get("risk_usd") else ""
     send_telegram_message(
         f"{title}\n{sym} - {SIDE_AR[t['side']]}\n"
+        f"الدخول: {fmt_price(sym, t['entry'])}\n"
+        f"الخروج: {fmt_price(sym, exit_price)}\n"
+        f"المدة التقريبية: {fmt_duration(end_ts - t['ts'])}\n"
         f"النتيجة: {r_value:+.1f}R{usd_txt}\n{stats_line()}\n"
         f"(1R = مقدار وقف الخسارة)"
     )
@@ -234,15 +247,15 @@ def check_trade(sym, res):
         hit_sl = lo <= t["sl"] if buy else hi >= t["sl"]
         hit_tp = hi >= t["tp"] if buy else lo <= t["tp"]
         if hit_sl:  # إذا تحقق الاثنان في نفس الشمعة نعتبرها خسارة (تحفظًا)
-            finish_trade(sym, "loss", -1.0, "❌ ضُرب وقف الخسارة")
+            finish_trade(sym, "loss", -1.0, "❌ ضُرب وقف الخسارة", t["sl"], ts)
             return
         if hit_tp:
-            finish_trade(sym, "win", TP_ATR / SL_ATR, "✅ تحقق الهدف")
+            finish_trade(sym, "win", TP_ATR / SL_ATR, "✅ تحقق الهدف", t["tp"], ts)
             return
     if res["tss"][-1] - t["ts"] > MAX_TRADE_SECONDS:
         sign = 1 if buy else -1
         r_val = sign * (res["price"] - t["entry"]) / abs(t["entry"] - t["sl"])
-        finish_trade(sym, "other", r_val, "⏹ انتهت المدة دون هدف أو وقف")
+        finish_trade(sym, "other", r_val, "⏹ انتهت المدة دون هدف أو وقف", res["price"], res["tss"][-1])
 
 
 # ============ خادم صحة (يطلبه Render للخدمات المجانية) ============
@@ -334,6 +347,11 @@ def main():
                 p, a = res["price"], res["atr"]
                 if a <= 0:
                     continue
+                pip = 0.01 if "JPY" in sym else 0.0001
+                if SL_ATR * a / pip < MIN_SL_PIPS:  # وقف ضيق جدًا: السبريد يأكله
+                    stats["skipped"] += 1
+                    log.info("تجاهل إشارة ضعيفة على %s (الوقف %.1f نقطة)", sym, SL_ATR * a / pip)
+                    continue
                 cur = open_trades.get(sym)
                 if cur and cur["side"] == side:
                     log.info("تجاهل إشارة %s على %s (صفقة مفتوحة بنفس الاتجاه)", side, sym)
@@ -341,7 +359,7 @@ def main():
                 if cur:  # إشارة معاكسة: نغلق المتتبَّعة عند السعر الحالي
                     sign = 1 if cur["side"] == "BUY" else -1
                     r_val = sign * (p - cur["entry"]) / abs(cur["entry"] - cur["sl"])
-                    finish_trade(sym, "other", r_val, "🔁 أُغلقت بإشارة معاكسة")
+                    finish_trade(sym, "other", r_val, "🔁 أُغلقت بإشارة معاكسة", p, res["ts"])
 
                 sign = 1 if side == "BUY" else -1
                 sl = p - sign * SL_ATR * a
@@ -379,8 +397,7 @@ def main():
                 msg += (
                     f"نسبة المخاطرة إلى العائد: 1:{TP_ATR / SL_ATR:g}\n"
                     f"مؤشر RSI: {res['rsi']:.1f}\n"
-                    f"⏱ الإشارة صالحة لشمعة واحدة فقط\n"
-                    f"💡 المس أي رقم لنسخه"
+                    f"⏱ الإشارة صالحة لشمعة واحدة فقط"
                 )
                 send_telegram_message(msg, html=True)
                 log.info("إشارة %s على %s", side, sym)
